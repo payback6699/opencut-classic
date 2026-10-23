@@ -13,6 +13,22 @@ import { TRANSCRIPTION_LANGUAGES } from "@/transcription/supported-languages";
 import type { TranscriptionLanguage } from "@/transcription/types";
 import { transcriptionService } from "@/services/transcription/service";
 import { insertCaptionChunksAsTextTrack } from "@/subtitles/insert";
+import { processMediaAssets } from "@/media/processing";
+import { buildElementFromMedia } from "@/timeline/element-utils";
+import { DEFAULT_NEW_ELEMENT_DURATION } from "@/timeline/creation";
+import { AddMediaAssetCommand } from "@/commands/media";
+import { InsertElementCommand } from "@/commands/timeline";
+import { BatchCommand } from "@/commands";
+import { DEFAULT_EXPORT_OPTIONS } from "@/export/defaults";
+import {
+	EXPORT_FORMAT_VALUES,
+	EXPORT_QUALITY_VALUES,
+	downloadBuffer,
+	getExportFileExtension,
+	getExportMimeType,
+	type ExportFormat,
+	type ExportQuality,
+} from "@/export";
 import { removeTimeRanges } from "./remove-ranges";
 import type { TimeRange } from "./protocol";
 
@@ -88,6 +104,32 @@ function requireRanges({ params }: { params: Params }): TimeRange[] {
 		}
 		return { start, end };
 	});
+}
+
+/**
+ * import_media and export_video move whole video files, so they only talk to
+ * services on this machine. A prompt-injected agent must not be able to send
+ * the project to, or pull files from, the internet.
+ */
+function requireLocalUrl({
+	params,
+	key,
+}: {
+	params: Params;
+	key: string;
+}): URL {
+	const value = params[key];
+	if (typeof value !== "string") {
+		throw new Error(`"${key}" must be a URL`);
+	}
+	const url = new URL(value);
+	const isLocal =
+		url.protocol === "http:" &&
+		(url.hostname === "localhost" || url.hostname === "127.0.0.1");
+	if (!isLocal) {
+		throw new Error(`"${key}" must be an http://localhost URL`);
+	}
+	return url;
 }
 
 function isTranscriptionLanguage(
@@ -269,6 +311,129 @@ const handlers: Record<string, Handler> = {
 		);
 		const trackId = insertCaptionChunksAsTextTrack({ editor, captions });
 		return { trackId, inserted: trackId ? captions.length : 0 };
+	},
+
+	import_media: async ({ editor, params }) => {
+		const url = requireLocalUrl({ params, key: "url" });
+		const response = await fetch(url);
+		if (!response.ok) {
+			throw new Error(`Could not download ${url}: ${response.status}`);
+		}
+		const blob = await response.blob();
+		const name =
+			typeof params.name === "string" && params.name.trim() !== ""
+				? params.name.trim()
+				: (url.pathname.split("/").pop() ?? "media");
+		const [asset] = await processMediaAssets({
+			files: [new File([blob], name, { type: blob.type })],
+		});
+		if (!asset) {
+			throw new Error(`OpenCut could not read ${name}`);
+		}
+
+		if (params.clearTimeline === true) {
+			const tracks = editor.scenes.getActiveScene().tracks;
+			const elements = getAllTracks({ tracks }).flatMap((track) =>
+				track.elements.map((element) => ({
+					trackId: track.id,
+					elementId: element.id,
+				})),
+			);
+			if (elements.length > 0) {
+				editor.timeline.deleteElements({ elements });
+			}
+		}
+		if (params.fitCanvas === true && asset.width && asset.height) {
+			await editor.project.updateSettings({
+				settings: { canvasSize: { width: asset.width, height: asset.height } },
+			});
+		}
+
+		const project = editor.project.getActive();
+		const addMediaCmd = new AddMediaAssetCommand({
+			projectId: project.metadata.id,
+			asset,
+		});
+		const element = buildElementFromMedia({
+			mediaId: addMediaCmd.getAssetId(),
+			mediaType: asset.type,
+			name: asset.name,
+			duration:
+				asset.duration != null
+					? mediaTimeFromSeconds({ seconds: asset.duration })
+					: DEFAULT_NEW_ELEMENT_DURATION,
+			startTime: mediaTimeFromSeconds({
+				seconds: typeof params.start === "number" ? params.start : 0,
+			}),
+			buffer:
+				asset.type === "audio"
+					? new AudioBuffer({ length: 1, sampleRate: 44100 })
+					: undefined,
+		});
+		editor.command.execute({
+			command: new BatchCommand([
+				addMediaCmd,
+				new InsertElementCommand({
+					element,
+					placement: {
+						mode: "auto",
+						trackType: asset.type === "audio" ? "audio" : "video",
+					},
+				}),
+			]),
+		});
+		return {
+			mediaId: addMediaCmd.getAssetId(),
+			name: asset.name,
+			type: asset.type,
+			duration: asset.duration ?? null,
+			width: asset.width ?? null,
+			height: asset.height ?? null,
+			timelineDuration: seconds({ time: editor.timeline.getTotalDuration() }),
+		};
+	},
+
+	export_video: async ({ editor, params }) => {
+		const format: ExportFormat = EXPORT_FORMAT_VALUES.includes(
+			params.format as ExportFormat,
+		)
+			? (params.format as ExportFormat)
+			: DEFAULT_EXPORT_OPTIONS.format;
+		const quality: ExportQuality = EXPORT_QUALITY_VALUES.includes(
+			params.quality as ExportQuality,
+		)
+			? (params.quality as ExportQuality)
+			: DEFAULT_EXPORT_OPTIONS.quality;
+		const uploadUrl =
+			params.uploadUrl === undefined
+				? null
+				: requireLocalUrl({ params, key: "uploadUrl" });
+
+		const result = await editor.project.export({
+			options: { ...DEFAULT_EXPORT_OPTIONS, format, quality },
+		});
+		editor.project.clearExportState();
+		if (!result.success || !result.buffer) {
+			throw new Error(
+				result.cancelled ? "Export cancelled" : (result.error ?? "Export failed"),
+			);
+		}
+
+		const mimeType = getExportMimeType({ format });
+		const filename = `${editor.project.getActive().metadata.name}${getExportFileExtension({ format })}`;
+		if (!uploadUrl) {
+			downloadBuffer({ buffer: result.buffer, filename, mimeType });
+			return { bytes: result.buffer.byteLength, downloaded: filename };
+		}
+		const upload = await fetch(uploadUrl, {
+			method: "POST",
+			headers: { "content-type": mimeType },
+			body: result.buffer,
+		});
+		if (!upload.ok) {
+			throw new Error(`Upload to ${uploadUrl.origin} failed: ${upload.status}`);
+		}
+		return { bytes: result.buffer.byteLength, uploaded: true, format };
 	},
 
 	seek: ({ editor, params }) => {
