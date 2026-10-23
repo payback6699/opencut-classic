@@ -415,7 +415,9 @@ const handlers: Record<string, Handler> = {
 		editor.project.clearExportState();
 		if (!result.success || !result.buffer) {
 			throw new Error(
-				result.cancelled ? "Export cancelled" : (result.error ?? "Export failed"),
+				result.cancelled
+					? "Export cancelled"
+					: (result.error ?? "Export failed"),
 			);
 		}
 
