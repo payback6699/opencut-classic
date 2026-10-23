@@ -9,6 +9,7 @@ import { useKeybindingsListener } from "@/actions/use-keybindings";
 import { useKeybindingsStore } from "@/actions/keybindings-store";
 import { useTimelineStore } from "@/timeline/timeline-store";
 import { useEditorActions } from "@/actions/use-editor-actions";
+import { useAgentBridge } from "@/agent-bridge/use-agent-bridge";
 import { loadFontAtlas } from "@/fonts/google-fonts";
 import {
 	initializeGpuRenderer,
@@ -132,6 +133,8 @@ function EditorRuntimeBindings() {
 	const rippleEditingEnabled = useTimelineStore(
 		(state) => state.rippleEditingEnabled,
 	);
+
+	useAgentBridge();
 
 	useEffect(() => {
 		editor.command.isRippleEnabled = rippleEditingEnabled;

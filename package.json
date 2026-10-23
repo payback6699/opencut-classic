@@ -15,6 +15,7 @@
     "dev:web": "turbo run dev --filter=@opencut/web",
     "format:web": "prettier apps/web/src/services/renderer --write",
     "generate:fonts": "npx tsx apps/web/scripts/generate-font-sprites.ts",
+    "start:mcp": "bun apps/mcp/src/index.ts",
     "lint:web": "eslint apps/web/src --ext .ts,.tsx",
     "lint:web:fix": "eslint apps/web/src --ext .ts,.tsx --fix",
     "preview:web": "turbo run preview --filter=@opencut/web",
