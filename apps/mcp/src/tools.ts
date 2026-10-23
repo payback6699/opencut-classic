@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { EditorBridge } from "./editor-bridge";
 
 const TRANSCRIBE_TIMEOUT_MS = 15 * 60_000;
+const EXPORT_TIMEOUT_MS = 60 * 60_000;
 
 const timeRange = z.object({
 	start: z.number().min(0).describe("Start of the range, in seconds"),
@@ -142,6 +143,25 @@ export function registerTools({
 			},
 		},
 		({ captions }) => call({ method: "add_captions", params: { captions } }),
+	);
+
+	server.registerTool(
+		"export_video",
+		{
+			title: "Export video",
+			description:
+				"Renders the timeline in the editor and saves the file to the user's Downloads folder through the browser. Can take several minutes for long videos.",
+			inputSchema: {
+				format: z.enum(["mp4", "webm"]).optional(),
+				quality: z.enum(["low", "medium", "high", "very_high"]).optional(),
+			},
+		},
+		({ format, quality }) =>
+			call({
+				method: "export_video",
+				params: { format, quality },
+				timeoutMs: EXPORT_TIMEOUT_MS,
+			}),
 	);
 
 	server.registerTool(

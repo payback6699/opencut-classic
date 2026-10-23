@@ -61,6 +61,7 @@ Only one editor tab is used at a time; the most recently connected one wins.
 | `split_at` | Splits the clips under a time (or only the given clips) |
 | `delete_elements` | Deletes clips by id, leaving the gap |
 | `add_captions` | Adds a caption track from `{ text, start, end }` entries |
+| `export_video` | Renders the timeline and saves it to your Downloads folder |
 | `seek` | Moves the playhead |
 | `undo` / `redo` | Editor undo history |
 
